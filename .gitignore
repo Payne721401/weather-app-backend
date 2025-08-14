@@ -87,6 +87,7 @@ tests/
 functions/ai_advice/
 
 # Ignored data files as requested
+requirements_dev.txt
 *.csv
 radar_forecast.json
 radar_forecast (1).json

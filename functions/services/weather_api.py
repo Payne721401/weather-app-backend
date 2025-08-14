@@ -449,8 +449,11 @@ class WeatherAPIService:
                         "format": "JSON"
                         }
                     )
-                if response.status_code == 200:
-                    return {api_type: True}
+                # 檢查狀態碼，如果不是 200，記錄下來
+                if response.status_code != 200:
+                    self.logger.warning(f"CWA API 連線測試失敗，狀態碼: {response.status_code}")
+                    return {api_type: False}
+                return {api_type: True}
 
             elif api_type == 'ncdr':
                 response = requests.get(
@@ -458,9 +461,10 @@ class WeatherAPIService:
                     headers={'Token': self.ncdr_api_key},
                     params={"format": "csv"}
                     )
-                    
-                if response.status_code == 200:
-                    return {api_type: True}
+                if response.status_code != 200:
+                    self.logger.warning(f"NCDR API 連線測試失敗，狀態碼: {response.status_code}")
+                    return {api_type: False}
+                return {api_type: True}
 
             elif api_type == 'monev':
                 response = requests.get(
@@ -471,12 +475,15 @@ class WeatherAPIService:
                         "limit": "1"
                     }
                 )
-                
-                if response.status_code == 200:
-                    return {api_type: True}
+                if response.status_code != 200:
+                    self.logger.warning(f"MONEV API 連線測試失敗，狀態碼: {response.status_code}")
+                    return {api_type: False}
+                return {api_type: True}
 
             else:
-                raise ValueError(f"不支援的 API 類型: {api_type}")
+                # 對於不支援的類型，也回傳 False
+                self.logger.error(f"不支援的 API 類型進行連線測試: {api_type}")
+                return {api_type: False}
             
         except Exception as e:
             self.logger.error(f"{api_type.upper()} API 連線測試失敗: {e}")
