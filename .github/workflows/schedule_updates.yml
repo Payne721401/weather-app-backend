@@ -51,17 +51,23 @@ jobs:
 
       # 步驟 5: 根據排程時間執行對應的 Python 腳本任務
       - name: Run Scheduled Tasks
-        # 將所有 GitHub Secrets 設為環境變數，讓 Python 腳本可以讀取
+        # 將所有 GitHub Secrets 和 Variables 設為環境變數
         env:
+          # --- 從 Secrets 讀取 (敏感資料) ---
           CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
           NCDR_API_KEY: ${{ secrets.NCDR_API_KEY }}
           MONEV_API_KEY: ${{ secrets.MONEV_API_KEY }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
-          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+          # --- 從 Variables 讀取 (非敏感設定) ---
+          R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME }}
+          R2_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
+          # 如果您也將這些設為 Variables，請取消註解並使用
+          # FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+          # USE_EMULATOR: ${{ vars.USE_EMULATOR }}
         run: |
           # 每 10 分鐘執行的任務
           if [[ "${{ github.event.schedule }}" == "*/10 * * * *" ]]; then
