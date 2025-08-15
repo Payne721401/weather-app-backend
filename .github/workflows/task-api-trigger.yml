@@ -1,0 +1,49 @@
+# This workflow is triggered by an external API call (repository_dispatch).
+# It runs a single task specified in the API payload.
+
+name: Task - API Trigger
+
+on:
+  repository_dispatch:
+    types: [run-single-task]
+
+jobs:
+  run-api-triggered-task:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Decode GCP Service Account Key
+        run: |
+          echo "${{ secrets.GCP_SA_KEY_BASE64 }}" | base64 --decode > "${{ runner.temp }}/gcp-key.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=${{ runner.temp }}/gcp-key.json" >> $GITHUB_ENV
+
+      - name: Run Task from API Payload
+        env:
+          CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
+          NCDR_API_KEY: ${{ secrets.NCDR_API_KEY }}
+          MONEV_API_KEY: ${{ secrets.MONEV_API_KEY }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME }}
+          R2_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
+        run: |
+          # Get the task name from the client_payload
+          TASK_TO_RUN="${{ github.event.client_payload.task }}"
+          if [[ -z "$TASK_TO_RUN" ]]; then
+            echo "Error: 'task' not specified in client_payload."
+            exit 1
+          fi
+          echo "Running single task from API trigger: $TASK_TO_RUN"
+          python functions/main.py "$TASK_TO_RUN"

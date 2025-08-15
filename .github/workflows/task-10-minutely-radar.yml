@@ -1,0 +1,44 @@
+# This workflow runs the radar update task every 10 minutes.
+# It can also be triggered manually from the Actions tab.
+
+name: Task - Radar (10-Minutely)
+
+on:
+  schedule:
+    # Runs every 10 minutes
+    - cron: '*/10 * * * *'
+  
+  workflow_dispatch:
+
+jobs:
+  run-radar-task:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Decode GCP Service Account Key
+        run: |
+          echo "${{ secrets.GCP_SA_KEY_BASE64 }}" | base64 --decode > "${{ runner.temp }}/gcp-key.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=${{ runner.temp }}/gcp-key.json" >> $GITHUB_ENV
+
+      - name: Run Radar Update Task
+        env:
+          CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
+          NCDR_API_KEY: ${{ secrets.NCDR_API_KEY }}
+          MONEV_API_KEY: ${{ secrets.MONEV_API_KEY }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME }}
+          R2_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
+        run: python functions/main.py update_radar
