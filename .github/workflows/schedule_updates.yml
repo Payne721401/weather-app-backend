@@ -3,6 +3,11 @@ name: Scheduled Weather Data Updates
 on:
   # 允許手動從 GitHub Actions 頁面觸發此工作流程，方便測試
   workflow_dispatch:
+    inputs:
+      task_name:
+        description: '手動執行單一任務的名稱 (例如 update_radar)，留空則執行所有任務'
+        required: false
+        default: ''
 
   schedule:
     # 使用 CRON 語法定義排程
@@ -22,6 +27,10 @@ on:
     
     # 每天 UTC 時間 16:00 (台灣時間午夜 00:00) 執行一次 (用於 sunrise_sunset)
     - cron: '0 16 * * *'
+
+  # 允許透過 API 外部觸發
+  repository_dispatch:
+    types: [run-single-task]
 
 jobs:
   run-tasks:
@@ -69,46 +78,64 @@ jobs:
           # FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
           # USE_EMULATOR: ${{ vars.USE_EMULATOR }}
         run: |
+          # 檢查是否為手動或外部 API 觸發，且有指定單一任務
+          if [[ ( "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.task_name }}" != "" ) || ( "${{ github.event_name }}" == "repository_dispatch" ) ]]; then
+            # 取得要執行的任務名稱
+            TASK_TO_RUN=""
+            if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+              TASK_TO_RUN="${{ github.event.inputs.task_name }}"
+            else # repository_dispatch
+              TASK_TO_RUN="${{ github.event.client_payload.task }}"
+            fi
+            
+            echo "Running single task: $TASK_TO_RUN"
+            python functions/main.py "$TASK_TO_RUN"
+            exit 0 # 執行完畢後直接結束
+          fi
+
+          # 如果是手動觸發但未指定任務，則執行所有任務
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.task_name }}" == "" ]]; then
+            echo "Manual trigger: Running all tasks for testing..."
+            python functions/main.py update_current_weather || true
+            python functions/main.py update_radar || true
+            python functions/main.py update_three_hour_forecast || true
+            python functions/main.py update_weekly_forecast || true
+            python functions/main.py update_uv_index || true
+            python functions/main.py update_air_quality || true
+            python functions/main.py update_sunrise_sunset || true
+            exit 0
+          fi
+
+          # --- 以下為排程觸發的任務 ---
+
           # 每 10 分鐘執行的任務
           if [[ "${{ github.event.schedule }}" == "*/10 * * * *" ]]; then
             echo "Running 10-minute tasks..."
-            python functions/main.py update_current_weather
-            python functions/main.py update_radar
+            python functions/main.py update_radar || true
           fi
           
           # 每小時執行的任務
           if [[ "${{ github.event.schedule }}" == "0 * * * *" ]]; then
             echo "Running hourly tasks..."
-            python functions/main.py update_uv_index
-            python functions/main.py update_air_quality
+            python functions/main.py update_current_weather || true
+            python functions/main.py update_uv_index || true
+            python functions/main.py update_air_quality || true
           fi
 
           # 每 3 小時執行的任務
           if [[ "${{ github.event.schedule }}" == "0 */3 * * *" ]]; then
             echo "Running 3-hourly tasks..."
-            python functions/main.py update_three_hour_forecast
+            python functions/main.py update_three_hour_forecast || true
           fi
 
           # 每日兩次的任務 (6:00, 18:00 UTC)
           if [[ "${{ github.event.schedule }}" == "0 6,18 * * *" ]]; then
             echo "Running twice-daily tasks..."
-            python functions/main.py update_weekly_forecast
+            python functions/main.py update_weekly_forecast || true
           fi
 
           # 每日執行的任務
           if [[ "${{ github.event.schedule }}" == "0 16 * * *" ]]; then
             echo "Running daily tasks..."
-            python functions/main.py update_sunrise_sunset
-          fi
-
-          # 如果是手動觸發，則執行所有任務以供測試
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "Manual trigger: Running all tasks for testing..."
-            python functions/main.py update_current_weather
-            python functions/main.py update_radar
-            python functions/main.py update_three_hour_forecast
-            python functions/main.py update_weekly_forecast
-            python functions/main.py update_uv_index
-            python functions/main.py update_air_quality
-            python functions/main.py update_sunrise_sunset
+            python functions/main.py update_sunrise_sunset || true
           fi
