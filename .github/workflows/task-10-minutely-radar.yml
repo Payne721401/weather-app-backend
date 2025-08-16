@@ -4,9 +4,7 @@
 name: Task - Radar (10-Minutely)
 
 on:
-  schedule:
-    # Runs every 10 minutes
-    - cron: '*/10 * * * *'
+  #Use workflow_dispatch to allow api triggering
   
   workflow_dispatch:
 
