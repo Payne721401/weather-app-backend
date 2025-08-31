@@ -41,16 +41,32 @@ jobs:
       # 步驟 1: 從您的儲存庫下載程式碼到虛擬環境
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       # 步驟 2: 設定您指定的 Python 版本
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11' # 您可以根據需求更改此版本
 
+      - name: Cache venv
+        id: cache-venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            venv-${{ runner.os }}-
+
       # 步驟 3: 安裝專案所需的 Python 套件
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        if: steps.cache-venv.outputs.cache-hit != 'true'
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
 
       # 步驟 4: 將 GCP 服務帳號金鑰從 Secret 還原成檔案 (安全作法)
       - name: Decode GCP Service Account Key
@@ -78,6 +94,7 @@ jobs:
           # FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
           # USE_EMULATOR: ${{ vars.USE_EMULATOR }}
         run: |
+          source .venv/bin/activate
           # 檢查是否為手動或外部 API 觸發，且有指定單一任務
           if [[ ( "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.task_name }}" != "" ) || ( "${{ github.event_name }}" == "repository_dispatch" ) ]]; then
             # 取得要執行的任務名稱
