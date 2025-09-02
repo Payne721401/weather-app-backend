@@ -1,18 +1,17 @@
 # weather_backend/database/models.py
 import logging
 import os
-import json
+import ujson as json
 
-from typing import Dict, Any, List
-from datetime import datetime
+from typing import Dict, List
+# from datetime import datetime
 from dotenv import load_dotenv
-from firebase_admin import firestore, storage
+from firebase_admin import firestore
 import boto3
 import firebase_admin
 from firebase_admin import credentials
 import geohash
 
-# from functions.config.settings import Settings
 from config.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -26,17 +25,10 @@ USE_EMULATOR = Settings.USE_EMULATOR
 # FUNCTIONS_EMULATOR_HOST = Settings.FUNCTIONS_EMULATOR_HOST or "localhost:5001"
 FIREBASE_PROJECT_ID = Settings.FIREBASE_PROJECT_ID
 
-# 調試環境變數
-# print(USE_EMULATOR)
-# print(FIRESTORE_EMULATOR_HOST)
-# print(FUNCTIONS_EMULATOR_HOST)
-# print(FIREBASE_PROJECT_ID)
-
 # 初始化 Firebase Admin SDK
 try:
     #檢測是否已初始化
     firebase_admin.get_app()
-    # print("Firebase Admin SDK already initialized")
     logger.info("Firebase Admin SDK already initialized")
 except ValueError:
     if USE_EMULATOR:
@@ -45,7 +37,6 @@ except ValueError:
         firebase_admin.initialize_app(options={
             'projectId': Settings.FIREBASE_PROJECT_ID,
         })
-        # print(f"Firebase 模擬器已初始化 (host: {FIRESTORE_EMULATOR_HOST})")
         # logger.info(f"Firebase 模擬器已初始化 (host: {FIRESTORE_EMULATOR_HOST})")
     else:
         try:
@@ -54,34 +45,63 @@ except ValueError:
             if service_account_path and os.path.exists(service_account_path):
                 cred = credentials.Certificate(service_account_path)
                 logger.info(f"使用服務帳號憑證: {service_account_path}")
-                # print("使用Google服務帳號憑證")
+
             else:
                 # 如果找不到服務帳號檔案，使用預設憑證
                 cred = credentials.ApplicationDefault()
                 logger.info("使用預設憑證")
-                # print("使用預設憑證")
-            
-            # firebase_admin.initialize_app(cred)
+
             firebase_admin.initialize_app(cred, {
                 'projectId': Settings.FIREBASE_PROJECT_ID
             })
-            # print("Firebase 正式環境已初始化")
             logger.info("Firebase 正式環境已初始化")
         except Exception as e:
-            # print(f"Firebase 初始化失敗: {e}")
             logger.error(f"Firebase 初始化失敗: {e}")
             raise
 
-# 取得 Firestore 客戶端
-# 取得 Firestore 客戶端
-try:
-    db = firestore.client()
-    # print("Firestore client initialized successfully")
-    logger.info("Firestore client initialized successfully")
-except Exception as e:
-    # print(f"Failed to create Firestore client: {e}")
-    logger.info(f"Failed to create Firestore client: {e}")
-    raise
+# 快取的客戶端實例
+_db_client = None
+_r2_client = None
+
+def get_firestore_client():
+    """獲取快取的 Firestore 客戶端"""
+    global _db_client
+    if _db_client is None:
+        try:
+            _db_client = firestore.client()
+            logger.info("Firestore client initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to create Firestore client: {e}")
+            raise
+    return _db_client
+
+def get_r2_client():
+    """獲取快取的 R2 (S3) 客戶端"""
+    global _r2_client
+    if _r2_client is None:
+        try:
+            access_key = os.getenv('R2_ACCESS_KEY_ID')
+            secret_key = os.getenv('R2_SECRET_ACCESS_KEY')
+            endpoint_url = os.getenv('R2_ENDPOINT_URL')
+            
+            if not all([access_key, secret_key, endpoint_url]):
+                raise ValueError("R2 credentials not properly configured")
+            
+            _r2_client = boto3.client(
+                's3',
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                endpoint_url=endpoint_url,
+                region_name='auto'
+            )
+            logger.info("R2 client initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to create R2 client: {e}")
+            raise
+    return _r2_client
+
+# 取得 Firestore 客戶端（向後相容）
+db = get_firestore_client()
 
 class FirestoreModel:
     """
@@ -97,17 +117,18 @@ class FirestoreModel:
             raise ValueError("未設定集合名稱")
         
         # 診斷信息
-        print(f"正在儲存文件到 Firestore")
-        print(f"集合名稱: {self.collection_name}")
-        print(f"文件 ID: {self.id}")
-        print(f"模擬器狀態: {USE_EMULATOR}")
-        print(f"FIRESTORE_EMULATOR_HOST: {os.getenv('FIRESTORE_EMULATOR_HOST')}")
-        print(f"GOOGLE_APPLICATION_CREDENTIALS: {os.getenv('GOOGLE_APPLICATION_CREDENTIALS')}")
+        # print(f"正在儲存文件到 Firestore")
+        # print(f"集合名稱: {self.collection_name}")
+        # print(f"文件 ID: {self.id}")
+        # print(f"模擬器狀態: {USE_EMULATOR}")
+        # print(f"FIRESTORE_EMULATOR_HOST: {os.getenv('FIRESTORE_EMULATOR_HOST')}")
+        # print(f"GOOGLE_APPLICATION_CREDENTIALS: {os.getenv('GOOGLE_APPLICATION_CREDENTIALS')}")
         
         # 轉換模型為字典
         data_dict = self.to_dict()
         
         # 儲存至 Firestore
+        db = get_firestore_client()
         collection_ref = db.collection(self.collection_name)
         
         # 使用 id 作為文件 ID，若不存在則自動生成
@@ -174,7 +195,7 @@ class ObservationData(FirestoreModel):
             'longitude': self.longitude,
             'geohash': location_hash,
             'observations': self.observations,
-            'timestamp': self.timestamp,
+            # 'timestamp': self.timestamp,
             'createdAt': firestore.SERVER_TIMESTAMP
         }
 
@@ -197,8 +218,12 @@ class ObservationData(FirestoreModel):
         }
 
         try:
+            db = get_firestore_client()
             batch = db.batch()
             count = 0
+            
+            # 預編譯集合引用（避免重複查找）
+            collection_ref = db.collection('observations')
 
             for data in observations:
                 try:
@@ -208,10 +233,11 @@ class ObservationData(FirestoreModel):
                         latitude=float(data['latitude']),
                         longitude=float(data['longitude']),
                         observations=data['observations'],
-                        timestamp=data.get('timestamp', datetime.now().timestamp())
+                        # timestamp=data.get('timestamp', datetime.now().timestamp())
+                        timestamp=0  # 臨時值，因為已註解掉
                     )
 
-                    doc_ref = db.collection('observations').document(model.id)
+                    doc_ref = collection_ref.document(model.id)
                     batch.set(doc_ref, model.to_dict(), merge=True)
                     count += 1
                     stats['success_count'] += 1
@@ -267,9 +293,9 @@ class ThreeHourForecast(FirestoreModel):
         self.latitude = latitude
         self.longitude = longitude
         # 確保每個預報 dict 都有 apparent_temperature 欄位
-        for f in forecasts:
-            if 'apparent_temperature' not in f:
-                f['apparent_temperature'] = None
+        # for f in forecasts:
+        #     if 'apparent_temperature' not in f:
+        #         f['apparent_temperature'] = None
         self.forecasts = forecasts
         self.timestamp = timestamp
         
@@ -287,7 +313,7 @@ class ThreeHourForecast(FirestoreModel):
                 'longitude': self.longitude
             },
             'hourly_forecast': self.forecasts,  # 每個 dict 需有 apparent_temperature
-            'timestamp': self.timestamp,
+            # 'timestamp': self.timestamp,
             'updatedAt': firestore.SERVER_TIMESTAMP
         }
 
@@ -311,7 +337,7 @@ class ThreeHourForecast(FirestoreModel):
         
         參數:
             forecasts: 預報資料列表
-            batch_size: 每批次處理的文件數量 (Firestore 限制為 500)
+            batch_size: 每批次處理的文件數量 
         """
         stats = {
             'total_attempts': len(forecasts),
@@ -321,8 +347,12 @@ class ThreeHourForecast(FirestoreModel):
         }
 
         try:
+            db = get_firestore_client()
             batch = db.batch()
             count = 0
+            
+            # 預編譯集合引用（避免重複查找）
+            collection_ref = db.collection('weather_forecasts')
             
             for data in forecasts:
                 try:
@@ -333,9 +363,10 @@ class ThreeHourForecast(FirestoreModel):
                         latitude=float(data['latitude']),
                         longitude=float(data['longitude']),
                         forecasts=data['forecasts'],
-                        timestamp=data.get('timestamp', datetime.now().timestamp())
+                        # timestamp=data.get('timestamp', datetime.now().timestamp())
+                        timestamp=0  # 臨時值，因為已註解掉
                     )
-                    doc_ref = db.collection('weather_forecasts').document(model.id)
+                    doc_ref = collection_ref.document(model.id)
                     batch.set(doc_ref, model.to_dict(), merge=True)
                     count += 1
                     stats['success_count'] += 1
@@ -384,11 +415,11 @@ class WeeklyForecast(FirestoreModel):
         self.latitude = latitude
         self.longitude = longitude
         # 確保每個預報 dict 都有 max_apparent_temperature, min_apparent_temperature 欄位
-        for f in forecasts:
-            if 'max_apparent_temperature' not in f:
-                f['max_apparent_temperature'] = None
-            if 'min_apparent_temperature' not in f:
-                f['min_apparent_temperature'] = None
+        # for f in forecasts:
+        #     if 'max_apparent_temperature' not in f:
+        #         f['max_apparent_temperature'] = None
+        #     if 'min_apparent_temperature' not in f:
+        #         f['min_apparent_temperature'] = None
         self.forecasts = forecasts
         self.timestamp = timestamp
         
@@ -405,13 +436,14 @@ class WeeklyForecast(FirestoreModel):
                 'longitude': self.longitude
             },
             'weekly_forecast': self.forecasts,  # 每個 dict 需有 max/min_apparent_temperature
-            'timestamp': self.timestamp,
+            # 'timestamp': self.timestamp,
             'updatedAt': firestore.SERVER_TIMESTAMP
         }
 
     def save_to_firestore(self):
         """儲存到 Firestore"""
         try:
+            db = get_firestore_client()
             doc_ref = db.collection(self.collection_name).document(self.id)
             doc_ref.set(self.to_dict(), merge=True)
             return self
@@ -436,8 +468,12 @@ class WeeklyForecast(FirestoreModel):
         }
 
         try:
+            db = get_firestore_client()
             batch = db.batch()
             count = 0
+            
+            # 預編譯集合引用（避免重複查找）
+            collection_ref = db.collection('weather_forecasts')
 
             for data in forecasts:
                 try:
@@ -448,9 +484,10 @@ class WeeklyForecast(FirestoreModel):
                         latitude=float(data['latitude']),
                         longitude=float(data['longitude']),
                         forecasts=data['forecasts'],
-                        timestamp=data.get('timestamp', int(datetime.now().timestamp()))
+                        # timestamp=data.get('timestamp', int(datetime.now().timestamp()))
+                        timestamp=0  # 臨時值，因為已註解掉
                     )
-                    doc_ref = db.collection('weather_forecasts').document(model.id)
+                    doc_ref = collection_ref.document(model.id)
                     batch.set(doc_ref, model.to_dict(), merge=True)
                     count += 1
                     stats['success_count'] += 1
@@ -494,20 +531,12 @@ class RadarPredict:
     @staticmethod
     def save_to_r2(radar_json: dict, storage_path: str) -> None:
         try:
-            # 讀取 R2 設定
-            access_key = os.getenv('R2_ACCESS_KEY_ID')
-            secret_key = os.getenv('R2_SECRET_ACCESS_KEY')
+            # 使用快取的 R2 客戶端
+            s3 = get_r2_client()
             bucket_name = os.getenv('R2_BUCKET_NAME')
-            endpoint_url = os.getenv('R2_ENDPOINT_URL')
-
-            # 初始化 R2 (S3 相容)
-            s3 = boto3.client(
-                's3',
-                aws_access_key_id=access_key,
-                aws_secret_access_key=secret_key,
-                endpoint_url=endpoint_url,
-                region_name='auto'  # R2 不需指定區域，但有些 boto3 版本需填寫
-            )
+            
+            if not bucket_name:
+                raise ValueError("R2_BUCKET_NAME not configured")
 
             # 上傳（同路徑會覆蓋舊檔案）
             s3.put_object(
@@ -553,7 +582,7 @@ class UVIndexData(FirestoreModel):
             },
             'geohash': location_hash,
             'uvIndex': self.uv_index,
-            'timestamp': self.timestamp,
+            # 'timestamp': self.timestamp,
             'updatedAt': firestore.SERVER_TIMESTAMP
         }
 
@@ -576,8 +605,13 @@ class UVIndexData(FirestoreModel):
         }
 
         try:
+            db = get_firestore_client()
             batch = db.batch()
             count = 0
+            
+            # 預編譯集合引用（避免重複查找）
+            collection_ref = db.collection('uv_index')
+            
             for data in uv_data:
 
                 try:
@@ -588,10 +622,11 @@ class UVIndexData(FirestoreModel):
                         latitude=float(data['latitude']),
                         longitude=float(data['longitude']),
                         uv_index=int(data['uvIndex']),
-                        timestamp=data.get('timestamp', datetime.now().timestamp())
+                        # timestamp=data.get('timestamp', datetime.now().timestamp())
+                        timestamp=0  # 臨時值，因為已註解掉
                     )
 
-                    doc_ref = db.collection('uv_index').document(model.id)
+                    doc_ref = collection_ref.document(model.id)
                     batch.set(doc_ref, model.to_dict(), merge=True)
                     count += 1
                     stats['success_count'] += 1
@@ -661,7 +696,7 @@ class AirQualityData(FirestoreModel):
             'geohash': location_hash,
             'measurements': self.measurements,
             'publishTime': self.publish_time,
-            'timestamp': self.timestamp,
+            # 'timestamp': self.timestamp,
             'updatedAt': firestore.SERVER_TIMESTAMP
         }
 
@@ -684,8 +719,12 @@ class AirQualityData(FirestoreModel):
         }
 
         try:
+            db = get_firestore_client()
             batch = db.batch()
             count = 0
+            
+            # 預編譯集合引用（避免重複查找）
+            collection_ref = db.collection('air_quality')
 
             for data in aq_data:
 
@@ -698,10 +737,11 @@ class AirQualityData(FirestoreModel):
                         longitude=float(data['location']['longitude']),
                         measurements=data['measurements'],
                         publish_time=data['publishTime'],
-                        timestamp=data.get('timestamp', datetime.now().timestamp())
+                        # timestamp=data.get('timestamp', datetime.now().timestamp())
+                        timestamp=0  # 臨時值，因為已註解掉
                     )
 
-                    doc_ref = db.collection('air_quality').document(model.id)
+                    doc_ref = collection_ref.document(model.id)
                     batch.set(doc_ref, model.to_dict(), merge=True)
                     count += 1
                     stats['success_count'] += 1
@@ -761,7 +801,7 @@ class SunriseData(FirestoreModel):
             'sunsetTime': self.sunset_time,
             'moonriseTime': self.moonrise_time,
             'moonsetTime': self.moonset_time,
-            'timestamp': self.timestamp,
+            # 'timestamp': self.timestamp,
             'updatedAt': firestore.SERVER_TIMESTAMP
         }
 
@@ -784,8 +824,13 @@ class SunriseData(FirestoreModel):
         }
 
         try:
+            db = get_firestore_client()
             batch = db.batch()
             count = 0
+            
+            # 預編譯集合引用（避免重複查找）
+            collection_ref = db.collection('sunrise_sunset')
+            
             for data in sunrise_list:
                 try:
                     model = SunriseData(
@@ -795,10 +840,11 @@ class SunriseData(FirestoreModel):
                         sunset_time=data['sunsetTime'],
                         moonrise_time=data.get('moonriseTime', 'N/A'), # 使用 .get() 增加彈性
                         moonset_time=data.get('moonsetTime', 'N/A'),
-                        timestamp=data.get('timestamp', datetime.now().timestamp())
+                        # timestamp=data.get('timestamp', datetime.now().timestamp())
+                        timestamp=0  # 臨時值，因為已註解掉
                     )
 
-                    doc_ref = db.collection(SunriseData.collection_name).document(model.id)
+                    doc_ref = collection_ref.document(model.id)
                     batch.set(doc_ref, model.to_dict(), merge=True)
                     count += 1
                     stats['success_count'] += 1
@@ -855,6 +901,6 @@ class AlertData(FirestoreModel):
             'author': self.author,
             'summary': self.summary,
             'category': self.category,
-            'timestamp': self.timestamp,
+            # 'timestamp': self.timestamp,
             'updatedAt': firestore.SERVER_TIMESTAMP
         }

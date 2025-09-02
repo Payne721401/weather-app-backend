@@ -1,7 +1,7 @@
 # weather_backend/functions/weather/forecast.py
 import logging
-from typing import Dict, Any, List, Optional
-from datetime import datetime
+from typing import Dict, List
+# from datetime import datetime
 import sys
 from pathlib import Path
 
@@ -65,11 +65,10 @@ class ForecastService:
             logger.error(f"獲取一週天氣預報時發生錯誤: {e}")
             raise
     
-    def update_firebase_three_hour(self, data: List[Dict]) -> None:
+    def update_firebase_three_hour(self, data: List[Dict]) -> Dict:
         """
-        將三小時天氣預報更新至 Firebase
+        將三小時天氣預報更新至 Firebase（使用傳統 batch_save）
         """
-
         try:
             stats = ThreeHourForecast.batch_save(data)
             if stats['failed_items']:
@@ -85,9 +84,8 @@ class ForecastService:
         except Exception as e:
             logger.error(f"批次更新 Firebase 三小時預報資料時發生錯誤: {e}")
             raise
-        
 
-    def update_firebase_weekly(self, data: List[Dict]) -> None:
+    def update_firebase_weekly(self, data: List[Dict]) -> Dict:
         """
         將一週天氣預報更新至 Firebase
         """

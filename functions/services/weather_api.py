@@ -1,12 +1,9 @@
 # weather_backend/functions/services/weather_api.py
 import os
 import requests
-# import aiohttp
-import asyncio
 import datetime
 from typing import Dict, Any, List, Optional
 import logging
-import time
 
 class WeatherAPIService:
     """
@@ -31,7 +28,21 @@ class WeatherAPIService:
         self.monev_base_url = "https://data.moenv.gov.tw/api/v2/aqx_p_432"
         self.alert_base_url = "https://alerts.ncdr.nat.gov.tw/JSONAtomFeeds.ashx"
         self.radar_base_url = "https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/F-B0046-001?Authorization=CWA-ADEE995D-155F-45D1-AD36-E41D081A0084&downloadType=WEB&format=JSON"
+        
+        # 初始化日誌
         self.logger = logging.getLogger(__name__)
+        
+        # GitHub Actions 環境日誌優化
+        self.is_ci_environment = bool(os.getenv('GITHUB_ACTIONS'))
+        if self.is_ci_environment:
+            # CI 環境只顯示警告和錯誤，減少日誌輸出
+            self.logger.setLevel(logging.WARNING)
+            # 同時關閉第三方庫的詳細日誌
+            logging.getLogger('urllib3.connectionpool').setLevel(logging.WARNING)
+            logging.getLogger('requests.packages.urllib3').setLevel(logging.WARNING)
+        else:
+            # 開發環境保持原有的日誌級別
+            self.logger.setLevel(logging.INFO)
 
     def _make_request(self, endpoint: str, params: Dict[str, Any] = None, api_type: str = 'cwa') -> Dict:
         """發送 HTTP 請求到指定的 API"""
@@ -68,12 +79,15 @@ class WeatherAPIService:
             default_params.update(params)
 
         try:
-            self.logger.info(f"正在請求 {api_type.upper()} API: {endpoint}")
+            # 只在非 CI 環境顯示請求日誌，減少 GitHub Actions 輸出
+            if not self.is_ci_environment:
+                self.logger.info(f"正在請求 {api_type.upper()} API: {endpoint}")
+            
             response = requests.get(
                 default_url, 
                 params=default_params, 
                 headers=headers,
-                timeout=30
+                timeout=10
             )
             response.raise_for_status()
 
@@ -137,10 +151,12 @@ class WeatherAPIService:
                         continue
 
                     merged_result["records"]["locations"].extend(locations_data)
-                    self.logger.info(f"成功處理第 {current_batch} 批次的資料")
+                    # 只在非 CI 環境顯示詳細處理日誌  
+                    if not self.is_ci_environment:
+                        self.logger.info(f"成功處理第 {current_batch} 批次的資料")
                     
-                    if current_batch < total_batches:
-                        time.sleep(1.5)  # 在最後一批次不需要等待
+                    # if current_batch < total_batches:
+                    #     time.sleep(1.5)  # 在最後一批次不需要等待
                         
                 except Exception as e:
                     self.logger.error(f"批次 {current_batch} 處理失敗: {e}")
@@ -220,8 +236,8 @@ class WeatherAPIService:
                     merged_result["records"]["locations"].extend(locations_data)
                     self.logger.info(f"成功處理第 {current_batch} 批次的資料")
 
-                    if current_batch < total_batches:
-                        time.sleep(1.5)  # 最後一批次不需要等待
+                    # if current_batch < total_batches:
+                    #     time.sleep(1.5)  # 最後一批次不需要等待
                         
                 except Exception as e:
                     self.logger.error(f"一週預報批次 {current_batch} 處理失敗: {e}")
@@ -287,7 +303,9 @@ class WeatherAPIService:
             # 使用 O-A0003-001 端點取得資料
             result = self._make_request("O-A0003-001", params)
             
-            self.logger.info("成功獲取紫外線資料")
+            # 只在非 CI 環境顯示成功日誌
+            if not self.is_ci_environment:
+                self.logger.info("成功獲取紫外線資料")
             return result
             
         except Exception as e:
@@ -307,7 +325,9 @@ class WeatherAPIService:
             }
             
             result = self._make_request("", params, api_type='monev')
-            self.logger.info("成功獲取空氣品質資料")
+            # 只在非 CI 環境顯示成功日誌
+            if not self.is_ci_environment:
+                self.logger.info("成功獲取空氣品質資料")
             return result
             
         except Exception as e:
@@ -327,9 +347,11 @@ class WeatherAPIService:
                 "downloadType": "WEB",
                 "format": "JSON"
             }
-            response = requests.get(url, params=params, timeout=30)
+            response = requests.get(url, params=params, timeout=15)
             response.raise_for_status()
-            self.logger.info("成功獲取雷達降雨預報 JSON")
+            # 只在非 CI 環境顯示成功日誌
+            if not self.is_ci_environment:
+                self.logger.info("成功獲取雷達降雨預報 JSON")
             return response.json()
         except Exception as e:
             self.logger.error(f"取得雷達降雨預報 JSON 時發生錯誤: {e}")
@@ -344,7 +366,7 @@ class WeatherAPIService:
         """
         try:
             # 使用 MaxDBZPic 端點
-            endpoint = "MaxDBZ"
+            endpoint = "MaxDBZPic"
             
             # 發送請求到 NCDR API
             result = self._make_request(endpoint, api_type='ncdr')
@@ -438,20 +460,41 @@ class WeatherAPIService:
         return status
 
     def _test_single_api(self, api_type: str) -> Dict[str, bool]:
-
+        """快速 API 連通性測試 - 避免下載完整數據"""
+        
+        # 快速 timeout 設置
+        timeout = 3 if self.is_ci_environment else 5
+        
         try:
             if api_type == 'cwa':
-                response = requests.get(
+                # 使用 HEAD 請求只檢查連通性，不下載數據
+                response = requests.head(
                     f"{self.cwa_base_url}/F-C0032-001",
                     params={
                         "Authorization": self.cwa_api_key,
-                        "limit": "1",
                         "format": "JSON"
-                        }
+                    },
+                    timeout=timeout
+                )
+                
+                # 如果 HEAD 不支援，降級為最小化 GET 請求
+                if response.status_code == 405:  # Method Not Allowed
+                    response = requests.get(
+                        f"{self.cwa_base_url}/F-C0032-001",
+                        params={
+                            "Authorization": self.cwa_api_key,
+                            "limit": "1",
+                            "format": "JSON"
+                        },
+                        timeout=timeout,
+                        stream=True  # 關鍵：使用串流模式，可以立即中斷
                     )
-                # 檢查狀態碼，如果不是 200，記錄下來
+                    # 立即關閉連接，不下載完整響應
+                    response.close()
+                
                 if response.status_code != 200:
-                    self.logger.warning(f"CWA API 連線測試失敗，狀態碼: {response.status_code}")
+                    if not self.is_ci_environment:
+                        self.logger.warning(f"CWA API 連線測試失敗，狀態碼: {response.status_code}")
                     return {api_type: False}
                 return {api_type: True}
 
@@ -459,24 +502,30 @@ class WeatherAPIService:
                 response = requests.get(
                     f"{self.ncdr_base_url}/MaxDBZPic",
                     headers={'Token': self.ncdr_api_key},
-                    params={"format": "csv"}
-                    )
+                    # params={"DataFormat": "csv"},
+                    stream=True,
+                    timeout=timeout
+                )                
                 if response.status_code != 200:
-                    self.logger.warning(f"NCDR API 連線測試失敗，狀態碼: {response.status_code}")
+                    if not self.is_ci_environment:
+                        self.logger.warning(f"NCDR API 連線測試失敗，狀態碼: {response.status_code}")
                     return {api_type: False}
                 return {api_type: True}
 
             elif api_type == 'monev':
-                response = requests.get(
-                    f"{self.monev_base_url}",
+                # 環境部 API 使用最小化請求
+                response = requests.head(
+                    self.monev_base_url,
                     params={
                         "api_key": self.monev_api_key,
                         "format": "JSON",
                         "limit": "1"
-                    }
+                    },
+                    timeout=timeout
                 )
                 if response.status_code != 200:
-                    self.logger.warning(f"MONEV API 連線測試失敗，狀態碼: {response.status_code}")
+                    if not self.is_ci_environment:
+                        self.logger.warning(f"MONEV API 連線測試失敗，狀態碼: {response.status_code}")
                     return {api_type: False}
                 return {api_type: True}
 
@@ -485,6 +534,14 @@ class WeatherAPIService:
                 self.logger.error(f"不支援的 API 類型進行連線測試: {api_type}")
                 return {api_type: False}
             
+        except requests.exceptions.Timeout:
+            if not self.is_ci_environment:
+                self.logger.warning(f"{api_type.upper()} API 連線測試超時 ({timeout}s)")
+            return {api_type: False}
+        except requests.exceptions.ConnectionError:
+            if not self.is_ci_environment:
+                self.logger.warning(f"{api_type.upper()} API 連線失敗 (網絡錯誤)")
+            return {api_type: False}
         except Exception as e:
             self.logger.error(f"{api_type.upper()} API 連線測試失敗: {e}")
             return {api_type: False}

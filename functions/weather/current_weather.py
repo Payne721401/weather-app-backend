@@ -1,7 +1,7 @@
 # weather_backend/functions/weather/current_weather.py
 import logging
-from typing import Dict, Any, List, Optional
-from datetime import datetime
+from typing import Dict, List
+# from datetime import datetime
 import sys
 from pathlib import Path
 
