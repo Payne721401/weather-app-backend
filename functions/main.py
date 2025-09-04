@@ -293,20 +293,44 @@ def update_air_quality() -> None:
 
 def update_radar_rainfall() -> None:
     """每 10 分鐘更新雷達降雨預測資料"""
-    # 1. 立即開始預載 R2 client（在背景執行）
-    start_r2_preloading()
+    # 🔍 時間測量開始
+    task_start_time = time.time()
     
-    # 2. 初始化 API 服務
+    # 1. 立即開始預載 R2 client（在背景執行）
+    preload_start = time.time()
+    start_r2_preloading()
+    preload_launch_time = (time.time() - preload_start) * 1000
+    logger.info(f"⏱️ R2 預載啟動耗時: {preload_launch_time:.1f}ms")
+    
+    # 2. 測量 API 服務初始化時間
+    api_init_start = time.time()
     weather_api = WeatherAPIService(api_key=Settings.CWA_API_KEY)
+    api_init_time = (time.time() - api_init_start) * 1000
+    logger.info(f"⏱️ WeatherAPIService 初始化耗時: {api_init_time:.1f}ms")
+    
+    radar_init_start = time.time()
     radar_service = RadarService(api_service=weather_api)
+    radar_init_time = (time.time() - radar_init_start) * 1000
+    logger.info(f"⏱️ RadarService 初始化耗時: {radar_init_time:.1f}ms")
+    
+    notification_init_start = time.time()
     notification_service = NotificationService()
+    notification_init_time = (time.time() - notification_init_start) * 1000
+    logger.info(f"⏱️ NotificationService 初始化耗時: {notification_init_time:.1f}ms")
+    
+    total_init_time = (time.time() - task_start_time) * 1000
+    logger.info(f"⏱️ 總初始化耗時: {total_init_time:.1f}ms")
     
     task_name = "update_radar_rainfall"
     start_time = time.time()
     start_time_utc = datetime.now(timezone.utc)
     try:
-        # 3. API 連線檢查（與 client 預載平行執行）
+        # 3. 測量 API 連線檢查時間
+        api_test_start = time.time()
         api_status = weather_api.test_connection(api_type='cwa')
+        api_test_time = (time.time() - api_test_start) * 1000
+        logger.info(f"⏱️ API 連線檢查耗時: {api_test_time:.1f}ms")
+        
         if not api_status['cwa']:
             error_message = "CWA API 連線失敗，無法更新雷達降雨預測資料"
             logger.error(error_message)
@@ -316,14 +340,30 @@ def update_radar_rainfall() -> None:
 
         logger.info(f"[{task_name}] 開始更新")
         
-        # 4. 獲取資料（與 client 預載平行執行）
+        # 4. 測量資料獲取時間
+        fetch_start = time.time()
         data = radar_service.fetch_radar_rainfall()
+        fetch_time = (time.time() - fetch_start) * 1000
+        logger.info(f"⏱️ 雷達資料獲取耗時: {fetch_time:.1f}ms")
         
-        # 5. 確保 R2 client 已經準備好
+        # 5. 測量 R2 預載等待時間
+        wait_start = time.time()
         wait_for_r2_preloading(timeout=10)
+        wait_time = (time.time() - wait_start) * 1000
+        logger.info(f"⏱️ R2 預載等待耗時: {wait_time:.1f}ms")
         
-        # 6. 資料處理和寫入
+        # 6. 測量資料處理和寫入時間
+        upload_start = time.time()
         stats = radar_service.update_r2_radar(data)
+        upload_time = (time.time() - upload_start) * 1000
+        logger.info(f"⏱️ 資料處理+上傳耗時: {upload_time:.1f}ms")
+        
+        # 總時間統計
+        total_task_time = (time.time() - task_start_time) * 1000
+        actual_task_time = (time.time() - start_time) * 1000
+        logger.info(f"⏱️ 總執行時間: {total_task_time:.1f}ms (含初始化: {total_init_time:.1f}ms)")
+        logger.info(f"⏱️ 實際任務時間: {actual_task_time:.1f}ms")
+        
         duration = time.time() - start_time
         logger.info(f"[{task_name}] 成功更新")
         notification_service.notify_success(task_name, stats, duration, start_time_utc)
