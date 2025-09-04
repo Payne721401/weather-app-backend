@@ -21,17 +21,16 @@ jobs:
         uses: ./.github/actions/setup-python-env
         with:
           gcp-sa-key: ${{ secrets.GCP_SA_KEY_BASE64 }}
+          cwa-api-key: ${{ secrets.CWA_API_KEY }}
+          ncdr-api-key: ${{ secrets.NCDR_API_KEY }}
+          monev-api-key: ${{ secrets.MONEV_API_KEY }}
+          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          telegram-bot-token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          telegram-chat-id: ${{ secrets.TELEGRAM_CHAT_ID }}
+          r2-bucket-name: ${{ vars.R2_BUCKET_NAME }}
+          r2-endpoint-url: ${{ vars.R2_ENDPOINT_URL }}
 
       - name: Run Radar Update Task
-        env:
-          CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
-          NCDR_API_KEY: ${{ secrets.NCDR_API_KEY }}
-          MONEV_API_KEY: ${{ secrets.MONEV_API_KEY }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME }}
-          R2_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
         run: |
           python functions/main.py update_radar

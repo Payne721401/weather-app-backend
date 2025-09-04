@@ -2,8 +2,11 @@
 import logging
 import os
 import ujson as json
+import concurrent.futures
+import gzip
+import io
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 # from datetime import datetime
 from dotenv import load_dotenv
 from firebase_admin import firestore
@@ -62,6 +65,106 @@ except ValueError:
 # 快取的客戶端實例
 _db_client = None
 _r2_client = None
+
+# Client 預載器類別
+class ClientPreloader:
+    """Client 預載器，在背景平行初始化"""
+    
+    def __init__(self):
+        self.firestore_future: Optional[concurrent.futures.Future] = None
+        self.r2_future: Optional[concurrent.futures.Future] = None
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="client-preloader")
+        self._firestore_preloading_started = False
+        self._r2_preloading_started = False
+    
+    def start_firestore_preloading(self):
+        """只預載 Firestore client"""
+        if self._firestore_preloading_started:
+            return  # 避免重複啟動
+        
+        self._firestore_preloading_started = True
+        logger.info("開始預載 Firestore client...")
+        
+        self.firestore_future = self.executor.submit(self._preload_firestore)
+    
+    def start_r2_preloading(self):
+        """只預載 R2 client"""
+        if self._r2_preloading_started:
+            return  # 避免重複啟動
+        
+        self._r2_preloading_started = True
+        logger.info("開始預載 R2 client...")
+        
+        self.r2_future = self.executor.submit(self._preload_r2)
+    
+    def start_preloading(self):
+        """預載所有 clients（保持向後兼容）"""
+        self.start_firestore_preloading()
+        self.start_r2_preloading()
+    
+    def _preload_firestore(self):
+        """預載 Firestore client"""
+        try:
+            client = get_firestore_client()
+            logger.info("Firestore client 預載完成")
+            return client
+        except Exception as e:
+            logger.warning(f"Firestore client 預載失敗: {e}")
+            return None
+    
+    def _preload_r2(self):
+        """預載 R2 client"""
+        try:
+            client = get_r2_client()
+            logger.info("R2 client 預載完成")
+            return client
+        except Exception as e:
+            logger.warning(f"R2 client 預載失敗: {e}")
+            return None
+    
+    def wait_for_firestore(self, timeout=10):
+        """等待 Firestore client 預載完成"""
+        try:
+            if self.firestore_future:
+                result = self.firestore_future.result(timeout=timeout)
+                if result is not None:
+                    logger.info("Firestore client 預載完成")
+                else:
+                    logger.warning("Firestore client 預載失敗，將在實際使用時重新初始化")
+            else:
+                logger.warning("Firestore client 預載未啟動")
+        except concurrent.futures.TimeoutError:
+            logger.warning("Firestore client 預載超時，繼續執行")
+        except Exception as e:
+            logger.warning(f"Firestore client 預載出錯: {e}")
+    
+    def wait_for_r2(self, timeout=10):
+        """等待 R2 client 預載完成"""
+        try:
+            if self.r2_future:
+                result = self.r2_future.result(timeout=timeout)
+                if result is not None:
+                    logger.info("R2 client 預載完成")
+                else:
+                    logger.warning("R2 client 預載失敗，將在實際使用時重新初始化")
+            else:
+                logger.warning("R2 client 預載未啟動")
+        except concurrent.futures.TimeoutError:
+            logger.warning("R2 client 預載超時，繼續執行")
+        except Exception as e:
+            logger.warning(f"R2 client 預載出錯: {e}")
+    
+    def wait_for_clients(self, timeout=10):
+        """等待所有 clients 預載完成（保持向後兼容）"""
+        self.wait_for_firestore(timeout)
+        self.wait_for_r2(timeout)
+    
+    def shutdown(self):
+        """關閉執行緒池"""
+        self.executor.shutdown(wait=False)
+
+# 全域預載器實例
+_client_preloader = ClientPreloader()
 
 def get_firestore_client():
     """獲取快取的 Firestore 客戶端"""
@@ -527,9 +630,10 @@ class RadarPredict:
     參數:
         radar_json: extract_radar_rainfall 處理後的 dict
         storage_path (str): 在儲存桶內的目標路徑（例如 'radar/forecast.json'
+        use_compression (bool): 是否使用 gzip 壓縮，預設為 True
     """
     @staticmethod
-    def save_to_r2(radar_json: dict, storage_path: str) -> None:
+    def save_to_r2(radar_json: dict, storage_path: str, use_compression: bool = True) -> None:
         try:
             # 使用快取的 R2 客戶端
             s3 = get_r2_client()
@@ -538,17 +642,49 @@ class RadarPredict:
             if not bucket_name:
                 raise ValueError("R2_BUCKET_NAME not configured")
 
-            # 上傳（同路徑會覆蓋舊檔案）
+            # 序列化 JSON
+            json_data = json.dumps(radar_json, ensure_ascii=False)
+            
+            if use_compression:
+                # 使用 gzip 壓縮
+                buffer = io.BytesIO()
+                with gzip.GzipFile(fileobj=buffer, mode='wb') as gz_file:
+                    gz_file.write(json_data.encode('utf-8'))
+                
+                compressed_data = buffer.getvalue()
+                content_type = 'application/json'
+                content_encoding = 'gzip'
+                
+                # 記錄壓縮效果
+                original_size = len(json_data.encode('utf-8'))
+                compressed_size = len(compressed_data)
+                compression_ratio = (1 - compressed_size / original_size) * 100
+                
+                logger.info(f"雷達資料壓縮效果: {original_size:,} → {compressed_size:,} bytes ({compression_ratio:.1f}% 減少)")
+                
+                upload_data = compressed_data
+                extra_args = {'ContentEncoding': content_encoding}
+            else:
+                # 不壓縮
+                upload_data = json_data.encode('utf-8')
+                content_type = 'application/json'
+                extra_args = {}
+
+            # 上傳至 R2
             s3.put_object(
                 Bucket=bucket_name,
                 Key=storage_path,
-                Body=json.dumps(radar_json, ensure_ascii=False),
-                ContentType='application/json',
-                CacheControl='public, max-age=600' #快取10分鐘
+                Body=upload_data,
+                ContentType=content_type,
+                CacheControl='public, max-age=600',  # 快取10分鐘
+                **extra_args
             )
-            logger.info(f"已成功上傳雷達降雨預報 JSON 至 Cloudflare R2: {storage_path}")
+            
+            size_info = f"({len(upload_data):,} bytes)" if use_compression else f"({len(upload_data):,} bytes, 未壓縮)"
+            logger.info(f"已成功上傳雷達降雨預報至 Cloudflare R2: {storage_path} {size_info}")
+            
         except Exception as e:
-            logger.error(f"上傳雷達降雨預報 JSON 至 Cloudflare R2 失敗: {e}")
+            logger.error(f"上傳雷達降雨預報至 Cloudflare R2 失敗: {e}")
             raise
 
 class UVIndexData(FirestoreModel):
@@ -904,3 +1040,32 @@ class AlertData(FirestoreModel):
             # 'timestamp': self.timestamp,
             'updatedAt': firestore.SERVER_TIMESTAMP
         }
+
+# Client 預載器便利函數
+def get_client_preloader():
+    """獲取全域 client 預載器"""
+    return _client_preloader
+
+def start_firestore_preloading():
+    """啟動 Firestore client 預載（便利函數）"""
+    _client_preloader.start_firestore_preloading()
+
+def start_r2_preloading():
+    """啟動 R2 client 預載（便利函數）"""
+    _client_preloader.start_r2_preloading()
+
+def start_client_preloading():
+    """啟動所有 client 預載（便利函數，保持向後兼容）"""
+    _client_preloader.start_preloading()
+
+def wait_for_firestore_preloading(timeout=10):
+    """等待 Firestore client 預載完成（便利函數）"""
+    _client_preloader.wait_for_firestore(timeout=timeout)
+
+def wait_for_r2_preloading(timeout=10):
+    """等待 R2 client 預載完成（便利函數）"""
+    _client_preloader.wait_for_r2(timeout=timeout)
+
+def wait_for_client_preloading(timeout=10):
+    """等待所有 client 預載完成（便利函數，保持向後兼容）"""
+    _client_preloader.wait_for_clients(timeout=timeout)

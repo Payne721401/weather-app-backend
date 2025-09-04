@@ -18,9 +18,17 @@ from weather.radar_rainfall import RadarService
 from weather.uv_index import UVIndexService
 from weather.sunrise import SunriseService
 from weather.air_quality import AirQualityService
-from weather.alert import AlertService
+# from weather.alert import AlertService
 from services.notification import NotificationService
 from config.settings import Settings
+
+# 導入 client 預載功能
+from database.models import (
+    start_firestore_preloading, 
+    start_r2_preloading,
+    wait_for_firestore_preloading, 
+    wait_for_r2_preloading
+)
 
 #載入環境變數
 def load_environment():
@@ -49,26 +57,23 @@ logging.basicConfig(level=getattr(logging, Settings.LOG_LEVEL),
                    format=Settings.LOG_FORMAT)
 logger = logging.getLogger(__name__)
 
-# 初始化服務
-weather_api = WeatherAPIService(api_key=Settings.CWA_API_KEY)
-current_weather_service = CurrentWeatherService(api_service=weather_api)
-forecast_service = ForecastService(api_service=weather_api)
-radar_service = RadarService(api_service=weather_api)
-air_quality_service = AirQualityService(api_service=weather_api)
-sunrise_service = SunriseService(api_service=weather_api)
-uv_index_service = UVIndexService(api_service=weather_api)
-alert_service = AlertService(api_service=weather_api)
-notification_service = NotificationService()
-
 # 排程函數
 
 def update_current_weather() -> None:
     """每 10 分鐘更新當前天氣資料"""
+    # 1. 立即開始預載 Firestore client（在背景執行）
+    start_firestore_preloading()
+    
+    # 2. 初始化 API 服務
+    weather_api = WeatherAPIService(api_key=Settings.CWA_API_KEY)
+    current_weather_service = CurrentWeatherService(api_service=weather_api)
+    notification_service = NotificationService()
+    
     task_name = "update_current_weather"
     start_time = time.time()
     start_time_utc = datetime.now(timezone.utc)
     try:
-        # 檢查 API 連線狀態
+        # 3. API 連線檢查（與 client 預載平行執行）
         api_status = weather_api.test_connection(api_type='cwa')
         if not api_status['cwa']:
             error_message = "CWA API 連線失敗，無法更新當前天氣資料"
@@ -78,7 +83,14 @@ def update_current_weather() -> None:
             return
             
         logger.info(f"[{task_name}] 開始更新")
+        
+        # 4. 獲取資料（與 client 預載平行執行）
         data = current_weather_service.fetch_current_weather()
+        
+        # 5. 確保 Firestore client 已經準備好
+        wait_for_firestore_preloading(timeout=5)
+        
+        # 6. 資料處理和寫入
         stats = current_weather_service.update_firebase(data)
         duration = time.time() - start_time
         logger.info(f"[{task_name}] 成功更新")
@@ -91,11 +103,19 @@ def update_current_weather() -> None:
 
 def update_three_hour_forecast() -> None:
     """每三小時更新三小時天氣預報"""
+    # 1. 立即開始預載 Firestore client（在背景執行）
+    start_firestore_preloading()
+    
+    # 2. 初始化 API 服務（不需要 DB clients）
+    weather_api = WeatherAPIService(api_key=Settings.CWA_API_KEY)
+    forecast_service = ForecastService(api_service=weather_api)
+    notification_service = NotificationService()
+    
     task_name = "update_three_hour_forecast"
     start_time = time.time()
     start_time_utc = datetime.now(timezone.utc)
     try:
-        # 檢查 API 連線狀態
+        # 3. API 連線檢查（與 client 預載平行執行）
         api_status = weather_api.test_connection(api_type='cwa')
         if not api_status['cwa']:
             error_message = "CWA API 連線失敗，無法更新三小時天氣預報"
@@ -105,7 +125,14 @@ def update_three_hour_forecast() -> None:
             return
         
         logger.info(f"[{task_name}] 開始更新")
+        
+        # 4. 獲取資料（與 client 預載平行執行）
         data = forecast_service.fetch_three_hour_forecast()
+        
+        # 5. 確保 Firestore client 已經準備好
+        wait_for_firestore_preloading(timeout=5)
+        
+        # 6. 資料處理和寫入（clients 已預載完成）
         stats = forecast_service.update_firebase_three_hour(data)
         
         # 驗證是否達到預期數量 (368個鄉鎮)
@@ -129,11 +156,19 @@ def update_three_hour_forecast() -> None:
 
 def update_weekly_forecast() -> None:
     """每 12 小時更新一週天氣預報"""
+    # 1. 立即開始預載 Firestore client（在背景執行）
+    start_firestore_preloading()
+    
+    # 2. 初始化 API 服務（不需要 DB clients）
+    weather_api = WeatherAPIService(api_key=Settings.CWA_API_KEY)
+    forecast_service = ForecastService(api_service=weather_api)
+    notification_service = NotificationService()
+    
     task_name = "update_weekly_forecast"
     start_time = time.time()
     start_time_utc = datetime.now(timezone.utc)
     try:
-        # 檢查 API 連線狀態
+        # 3. API 連線檢查（與 client 預載平行執行）
         api_status = weather_api.test_connection(api_type='cwa')
         if not api_status['cwa']:
             error_message = "CWA API 連線失敗，無法更新一週天氣預報"
@@ -143,7 +178,14 @@ def update_weekly_forecast() -> None:
             return
         
         logger.info(f"[{task_name}] 開始更新")
+        
+        # 4. 獲取資料（與 client 預載平行執行）
         data = forecast_service.fetch_weekly_forecast()
+        
+        # 5. 確保 Firestore client 已經準備好
+        wait_for_firestore_preloading(timeout=5)
+        
+        # 6. 資料處理和寫入（clients 已預載完成）
         stats = forecast_service.update_firebase_weekly(data)
 
         # 驗證是否達到預期數量 (368個鄉鎮)
@@ -167,11 +209,19 @@ def update_weekly_forecast() -> None:
 
 def update_uv_index() -> None:
     """每小時更新紫外線指數資料"""
+    # 1. 立即開始預載 Firestore client（在背景執行）
+    start_firestore_preloading()
+    
+    # 2. 初始化 API 服務
+    weather_api = WeatherAPIService(api_key=Settings.CWA_API_KEY)
+    uv_index_service = UVIndexService(api_service=weather_api)
+    notification_service = NotificationService()
+    
     task_name = "update_uv_index"
     start_time = time.time()
     start_time_utc = datetime.now(timezone.utc)
     try:
-        # 檢查 API 連線狀態
+        # 3. API 連線檢查（與 client 預載平行執行）
         api_status = weather_api.test_connection(api_type='cwa')
         if not api_status['cwa']:
             error_message = "CWA API 連線失敗，無法更新紫外線指數資料"
@@ -181,7 +231,14 @@ def update_uv_index() -> None:
             return
         
         logger.info(f"[{task_name}] 開始更新")
+        
+        # 4. 獲取資料（與 client 預載平行執行）
         data = uv_index_service.fetch_uv_index()
+        
+        # 5. 確保 Firestore client 已經準備好
+        wait_for_firestore_preloading(timeout=5)
+        
+        # 6. 資料處理和寫入
         stats = uv_index_service.update_firebase(data)
         duration = time.time() - start_time
         logger.info(f"[{task_name}] 成功更新")
@@ -194,11 +251,19 @@ def update_uv_index() -> None:
 
 def update_air_quality() -> None:
     """每小時更新空氣品質資料"""
+    # 1. 立即開始預載 Firestore client（在背景執行）
+    start_firestore_preloading()
+    
+    # 2. 初始化 API 服務
+    weather_api = WeatherAPIService(api_key=Settings.CWA_API_KEY)
+    air_quality_service = AirQualityService(api_service=weather_api)
+    notification_service = NotificationService()
+    
     task_name = "update_air_quality"
     start_time = time.time()
     start_time_utc = datetime.now(timezone.utc)
     try:
-        # 檢查 API 連線狀態
+        # 3. API 連線檢查（與 client 預載平行執行）
         api_status = weather_api.test_connection(api_type='monev')
         if not api_status['monev']:
             error_message = "MONEV API 連線失敗，無法更新空氣品質資料"
@@ -208,7 +273,14 @@ def update_air_quality() -> None:
             return
         
         logger.info(f"[{task_name}] 開始更新")
+        
+        # 4. 獲取資料（與 client 預載平行執行）
         data = air_quality_service.fetch_air_quality()
+        
+        # 5. 確保 Firestore client 已經準備好
+        wait_for_firestore_preloading(timeout=5)
+        
+        # 6. 資料處理和寫入
         stats = air_quality_service.update_firebase(data)
         duration = time.time() - start_time
         logger.info(f"[{task_name}] 成功更新")
@@ -221,11 +293,19 @@ def update_air_quality() -> None:
 
 def update_radar_rainfall() -> None:
     """每 10 分鐘更新雷達降雨預測資料"""
+    # 1. 立即開始預載 R2 client（在背景執行）
+    start_r2_preloading()
+    
+    # 2. 初始化 API 服務
+    weather_api = WeatherAPIService(api_key=Settings.CWA_API_KEY)
+    radar_service = RadarService(api_service=weather_api)
+    notification_service = NotificationService()
+    
     task_name = "update_radar_rainfall"
     start_time = time.time()
     start_time_utc = datetime.now(timezone.utc)
     try:
-        # 檢查 API 連線狀態
+        # 3. API 連線檢查（與 client 預載平行執行）
         api_status = weather_api.test_connection(api_type='cwa')
         if not api_status['cwa']:
             error_message = "CWA API 連線失敗，無法更新雷達降雨預測資料"
@@ -235,7 +315,14 @@ def update_radar_rainfall() -> None:
             return
 
         logger.info(f"[{task_name}] 開始更新")
+        
+        # 4. 獲取資料（與 client 預載平行執行）
         data = radar_service.fetch_radar_rainfall()
+        
+        # 5. 確保 R2 client 已經準備好
+        wait_for_r2_preloading(timeout=10)
+        
+        # 6. 資料處理和寫入
         stats = radar_service.update_r2_radar(data)
         duration = time.time() - start_time
         logger.info(f"[{task_name}] 成功更新")
@@ -248,11 +335,19 @@ def update_radar_rainfall() -> None:
 
 def update_sunrise_sunset() -> None:
     """每天凌晨更新日出日落資料"""
+    # 1. 立即開始預載 Firestore client（在背景執行）
+    start_firestore_preloading()
+    
+    # 2. 初始化 API 服務
+    weather_api = WeatherAPIService(api_key=Settings.CWA_API_KEY)
+    sunrise_service = SunriseService(api_service=weather_api)
+    notification_service = NotificationService()
+    
     task_name = "update_sunrise_sunset"
     start_time = time.time()
     start_time_utc = datetime.now(timezone.utc)
     try:
-        # 檢查 API 連線狀態
+        # 3. API 連線檢查（與 client 預載平行執行）
         api_status = weather_api.test_connection(api_type='cwa')
         if not api_status['cwa']:
             error_message = "CWA API 連線失敗，無法更新日出日落資料"
@@ -262,7 +357,14 @@ def update_sunrise_sunset() -> None:
             return
         
         logger.info(f"[{task_name}] 開始更新")
+        
+        # 4. 獲取資料（與 client 預載平行執行）
         data = sunrise_service.fetch_sunrise_data()
+        
+        # 5. 確保 Firestore client 已經準備好
+        wait_for_firestore_preloading(timeout=5)
+        
+        # 6. 資料處理和寫入
         stats = sunrise_service.update_firebase(data)
         duration = time.time() - start_time
         logger.info(f"[{task_name}] 成功更新")
@@ -339,7 +441,7 @@ if __name__ == "__main__":
         'update_air_quality',
         'update_radar',
         'update_sunrise_sunset',
-        'update_alerts'
+        # 'update_alerts'
     ], help="要執行的任務名稱")
     
     args = parser.parse_args()

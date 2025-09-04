@@ -5,6 +5,33 @@ inputs:
   gcp-sa-key:
     description: 'GCP Service Account Key (base64 encoded)'
     required: true
+  cwa-api-key:
+    description: 'CWA API Key'
+    required: true
+  ncdr-api-key:
+    description: 'NCDR API Key'
+    required: true
+  monev-api-key:
+    description: 'MONEV API Key'
+    required: true
+  r2-access-key-id:
+    description: 'R2 Access Key ID'
+    required: true
+  r2-secret-access-key:
+    description: 'R2 Secret Access Key'
+    required: true
+  telegram-bot-token:
+    description: 'Telegram Bot Token'
+    required: true
+  telegram-chat-id:
+    description: 'Telegram Chat ID'
+    required: true
+  r2-bucket-name:
+    description: 'R2 Bucket Name'
+    required: true
+  r2-endpoint-url:
+    description: 'R2 Endpoint URL'
+    required: true
 
 runs:
   using: "composite"
@@ -12,15 +39,37 @@ runs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11'
+        python-version: '3.12'
+
+    - name: Cache venv and setup environment (parallel)
+      shell: bash
+      run: |
+        # 在背景解碼 GCP key
+        echo "${{ inputs.gcp-sa-key }}" | base64 --decode > "${{ runner.temp }}/gcp-key.json" &
+        
+        # 同時設定所有環境變數
+        echo "GOOGLE_APPLICATION_CREDENTIALS=${{ runner.temp }}/gcp-key.json" >> $GITHUB_ENV
+        echo "CWA_API_KEY=${{ inputs.cwa-api-key }}" >> $GITHUB_ENV
+        echo "NCDR_API_KEY=${{ inputs.ncdr-api-key }}" >> $GITHUB_ENV
+        echo "MONEV_API_KEY=${{ inputs.monev-api-key }}" >> $GITHUB_ENV
+        echo "R2_ACCESS_KEY_ID=${{ inputs.r2-access-key-id }}" >> $GITHUB_ENV
+        echo "R2_SECRET_ACCESS_KEY=${{ inputs.r2-secret-access-key }}" >> $GITHUB_ENV
+        echo "TELEGRAM_BOT_TOKEN=${{ inputs.telegram-bot-token }}" >> $GITHUB_ENV
+        echo "TELEGRAM_CHAT_ID=${{ inputs.telegram-chat-id }}" >> $GITHUB_ENV
+        echo "R2_BUCKET_NAME=${{ inputs.r2-bucket-name }}" >> $GITHUB_ENV
+        echo "R2_ENDPOINT_URL=${{ inputs.r2-endpoint-url }}" >> $GITHUB_ENV
+        
+        # 等待 GCP key 解碼完成
+        wait
 
     - name: Cache venv
       id: cache-venv
       uses: actions/cache@v4
       with:
         path: .venv
-        key: venv-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+        key: venv-${{ runner.os }}-py3.12-${{ hashFiles('requirements.txt') }}
         restore-keys: |
+          venv-${{ runner.os }}-py3.12-
           venv-${{ runner.os }}-
 
     - name: Install dependencies
@@ -38,9 +87,3 @@ runs:
         # 確保虛擬環境在後續步驟中可用
         echo "VIRTUAL_ENV=${{ github.workspace }}/.venv" >> $GITHUB_ENV
         echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
-
-    - name: Decode GCP Service Account Key
-      shell: bash
-      run: |
-        echo "${{ inputs.gcp-sa-key }}" | base64 --decode > "${{ runner.temp }}/gcp-key.json"
-        echo "GOOGLE_APPLICATION_CREDENTIALS=${{ runner.temp }}/gcp-key.json" >> $GITHUB_ENV
