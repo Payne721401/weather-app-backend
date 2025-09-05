@@ -7,7 +7,6 @@ import sys
 import argparse
 from datetime import datetime, timezone
 
-# from flask import Flask, Request, jsonify
 from dotenv import load_dotenv
 # from firebase_functions import scheduler_fn, https_fn, options
 
@@ -302,7 +301,7 @@ def update_radar_rainfall() -> None:
     preload_launch_time = (time.time() - preload_start) * 1000
     logger.info(f"⏱️ R2 預載啟動耗時: {preload_launch_time:.1f}ms")
     
-    # 2. 測量 API 服務初始化時間
+    # 2. 快速初始化服務（測量時間）
     api_init_start = time.time()
     weather_api = WeatherAPIService(api_key=Settings.CWA_API_KEY)
     api_init_time = (time.time() - api_init_start) * 1000
@@ -325,34 +324,34 @@ def update_radar_rainfall() -> None:
     start_time = time.time()
     start_time_utc = datetime.now(timezone.utc)
     try:
-        # 3. 測量 API 連線檢查時間
-        api_test_start = time.time()
-        api_status = weather_api.test_connection(api_type='cwa')
-        api_test_time = (time.time() - api_test_start) * 1000
-        logger.info(f"⏱️ API 連線檢查耗時: {api_test_time:.1f}ms")
+        # 測量 API 連線檢查時間
+        # api_test_start = time.time()
+        # api_status = weather_api.test_connection(api_type='cwa')
+        # api_test_time = (time.time() - api_test_start) * 1000
+        # logger.info(f"⏱️ API 連線檢查耗時: {api_test_time:.1f}ms")
         
-        if not api_status['cwa']:
-            error_message = "CWA API 連線失敗，無法更新雷達降雨預測資料"
-            logger.error(error_message)
-            duration = time.time() - start_time
-            notification_service.notify_failure(task_name, ConnectionError(error_message), duration, start_time_utc)
-            return
+        # if not api_status['cwa']:
+        #     error_message = "CWA API 連線失敗，無法更新雷達降雨預測資料"
+        #     logger.error(error_message)
+        #     duration = time.time() - start_time
+        #     notification_service.notify_failure(task_name, ConnectionError(error_message), duration, start_time_utc)
+        #     return
 
         logger.info(f"[{task_name}] 開始更新")
         
-        # 4. 測量資料獲取時間
+        # 3. 直接獲取資料（與 R2 預載平行，移除 API 檢測）
         fetch_start = time.time()
-        data = radar_service.fetch_radar_rainfall()
+        data = radar_service.fetch_radar_rainfall()  # 如果 API 有問題，這裡會拋出例外
         fetch_time = (time.time() - fetch_start) * 1000
         logger.info(f"⏱️ 雷達資料獲取耗時: {fetch_time:.1f}ms")
         
-        # 5. 測量 R2 預載等待時間
+        # 4. 確保 R2 client 已經準備好
         wait_start = time.time()
-        wait_for_r2_preloading(timeout=10)
+        wait_for_r2_preloading(timeout=5)  # 縮短 timeout，應該已經完成
         wait_time = (time.time() - wait_start) * 1000
         logger.info(f"⏱️ R2 預載等待耗時: {wait_time:.1f}ms")
         
-        # 6. 測量資料處理和寫入時間
+        # 5. 資料處理和上傳
         upload_start = time.time()
         stats = radar_service.update_r2_radar(data)
         upload_time = (time.time() - upload_start) * 1000
@@ -367,6 +366,7 @@ def update_radar_rainfall() -> None:
         duration = time.time() - start_time
         logger.info(f"[{task_name}] 成功更新")
         notification_service.notify_success(task_name, stats, duration, start_time_utc)
+        
     except Exception as e:
         duration = time.time() - start_time
         logger.error(f"[{task_name}] 發生錯誤: {e}")
