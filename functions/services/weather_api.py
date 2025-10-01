@@ -27,7 +27,7 @@ class WeatherAPIService:
         self.ncdr_base_url = "https://dataapi2.ncdr.nat.gov.tw/NCDR"
         self.monev_base_url = "https://data.moenv.gov.tw/api/v2/aqx_p_432"
         self.alert_base_url = "https://alerts.ncdr.nat.gov.tw/JSONAtomFeeds.ashx"
-        self.radar_base_url = "https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/F-B0046-001?Authorization=CWA-ADEE995D-155F-45D1-AD36-E41D081A0084&downloadType=WEB&format=JSON"
+        self.radar_base_url = "https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/F-B0046-001"
         
         # 初始化日誌
         self.logger = logging.getLogger(__name__)
@@ -333,7 +333,49 @@ class WeatherAPIService:
         except Exception as e:
             self.logger.error(f"取得空氣品質資料時發生錯誤: {e}")
             raise
-    def get_radar_rainfall_json(self) -> dict:
+    def get_typhoon_forecast_image(self) -> bytes:
+        """
+        從 SMCA 網站獲取最新的颱風系集預報圖片。
+        URL 會根據當前時間自動選擇 00Z 或 12Z 的預報。
+        """
+        try:
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
+            now_taiwan = now_utc + datetime.timedelta(hours=8)
+
+            if now_taiwan.hour >= 14 and now_taiwan.minute >= 40:
+                # 14:40 後，取當天 00Z 的預報
+                target_time = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+            elif now_taiwan.hour >= 2 and now_taiwan.minute >= 40:
+                # 02:40 後，取前一天 12Z 的預報
+                target_time = (now_utc - datetime.timedelta(days=1)).replace(hour=12, minute=0, second=0, microsecond=0)
+            else:
+                # 02:40 前，取前一天 00Z 的預報
+                target_time = (now_utc - datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+            date_str = target_time.strftime("%Y%m%d%H")
+            
+            base_url = "https://www.smca.fun/assets/image/TC_Forecast/GLOBAL_ENSEMBLE/FNV3"
+            image_url = f"{base_url}/{date_str}/FNV3_ENS_WesternPacific_{date_str}Z.png"
+            
+            self.logger.info(f"正在下載颱風預報圖片: {image_url}")
+
+            response = requests.get(image_url, timeout=20)
+            response.raise_for_status()
+            
+            if 'image/png' not in response.headers.get('Content-Type', ''):
+                raise TypeError("下載的檔案不是 PNG 圖片")
+
+            self.logger.info("成功下載颱風預報圖片")
+            return response.content
+
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"下載颱風預報圖片時發生網路錯誤: {e}")
+            raise
+        except Exception as e:
+            self.logger.error(f"獲取颱風預報圖片時發生未知錯誤: {e}")
+            raise
+
+    def get_radar_rainfall_json(self) -> Dict:
         """
         從氣象署取得雷達降雨預報 JSON 資料
 
@@ -341,7 +383,7 @@ class WeatherAPIService:
             dict: 雷達降雨預報的 JSON 資料
         """
         try:
-            url = "https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/F-B0046-001"
+            url = self.radar_base_url
             params = {
                 "Authorization": self.cwa_api_key,
                 "downloadType": "WEB",
@@ -349,10 +391,12 @@ class WeatherAPIService:
             }
             response = requests.get(url, params=params, timeout=15)
             response.raise_for_status()
+            
             # 只在非 CI 環境顯示成功日誌
             if not self.is_ci_environment:
                 self.logger.info("成功獲取雷達降雨預報 JSON")
             return response.json()
+            
         except Exception as e:
             self.logger.error(f"取得雷達降雨預報 JSON 時發生錯誤: {e}")
             raise

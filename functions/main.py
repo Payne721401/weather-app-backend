@@ -17,6 +17,7 @@ from weather.radar_rainfall import RadarService
 from weather.uv_index import UVIndexService
 from weather.sunrise import SunriseService
 from weather.air_quality import AirQualityService
+from weather.typhoon_forecast import TyphoonForecastService
 # from weather.alert import AlertService
 from services.notification import NotificationService
 from config.settings import Settings
@@ -373,6 +374,36 @@ def update_radar_rainfall() -> None:
         notification_service.notify_failure(task_name, e, duration, start_time_utc)
         raise
 
+def update_typhoon_forecast() -> None:
+    """每天兩次更新颱風系集預報圖片"""
+    start_r2_preloading()
+    
+    weather_api = WeatherAPIService(api_key=Settings.CWA_API_KEY)
+    typhoon_service = TyphoonForecastService(api_service=weather_api)
+    notification_service = NotificationService()
+    
+    task_name = "update_typhoon_forecast"
+    start_time = time.time()
+    start_time_utc = datetime.now(timezone.utc)
+    try:
+        logger.info(f"[{task_name}] 開始更新")
+        
+        image_data = typhoon_service.fetch_forecast_image()
+        
+        wait_for_r2_preloading(timeout=5)
+        
+        stats = typhoon_service.update_r2_image(image_data)
+        
+        duration = time.time() - start_time
+        logger.info(f"[{task_name}] 成功更新")
+        notification_service.notify_success(task_name, stats, duration, start_time_utc)
+        
+    except Exception as e:
+        duration = time.time() - start_time
+        logger.error(f"[{task_name}] 發生錯誤: {e}")
+        notification_service.notify_failure(task_name, e, duration, start_time_utc)
+        raise
+
 def update_sunrise_sunset() -> None:
     """每天凌晨更新日出日落資料"""
     # 1. 立即開始預載 Firestore client（在背景執行）
@@ -481,6 +512,7 @@ if __name__ == "__main__":
         'update_air_quality',
         'update_radar',
         'update_sunrise_sunset',
+        'update_typhoon_forecast',
         # 'update_alerts'
     ], help="要執行的任務名稱")
     
@@ -495,6 +527,8 @@ if __name__ == "__main__":
         'update_air_quality': update_air_quality,
         'update_radar': update_radar_rainfall,
         'update_sunrise_sunset': update_sunrise_sunset,
+        'update_typhoon_forecast': update_typhoon_forecast,
+        # 'update_alerts': update_alerts
     }
     
     # 根據傳入的參數，執行對應的函式

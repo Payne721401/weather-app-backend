@@ -219,14 +219,6 @@ class FirestoreModel:
         if not self.collection_name:
             raise ValueError("未設定集合名稱")
         
-        # 診斷信息
-        # print(f"正在儲存文件到 Firestore")
-        # print(f"集合名稱: {self.collection_name}")
-        # print(f"文件 ID: {self.id}")
-        # print(f"模擬器狀態: {USE_EMULATOR}")
-        # print(f"FIRESTORE_EMULATOR_HOST: {os.getenv('FIRESTORE_EMULATOR_HOST')}")
-        # print(f"GOOGLE_APPLICATION_CREDENTIALS: {os.getenv('GOOGLE_APPLICATION_CREDENTIALS')}")
-        
         # 轉換模型為字典
         data_dict = self.to_dict()
         
@@ -395,10 +387,6 @@ class ThreeHourForecast(FirestoreModel):
         self.town_name = town_name
         self.latitude = latitude
         self.longitude = longitude
-        # 確保每個預報 dict 都有 apparent_temperature 欄位
-        # for f in forecasts:
-        #     if 'apparent_temperature' not in f:
-        #         f['apparent_temperature'] = None
         self.forecasts = forecasts
         self.timestamp = timestamp
         
@@ -501,8 +489,6 @@ class ThreeHourForecast(FirestoreModel):
         except Exception as e:
             logger.error(f"批次儲存三小時預報資料時發生錯誤: {e}")
             raise
-
-
 class WeeklyForecast(FirestoreModel):
     """一週天氣預報資料模型"""
     collection_name = 'weather_forecasts'
@@ -676,7 +662,7 @@ class RadarPredict:
                 Key=storage_path,
                 Body=upload_data,
                 ContentType=content_type,
-                CacheControl='public, max-age=600',  # 快取10分鐘
+                CacheControl='public, max-age=300',  # 快取5分鐘
                 **extra_args
             )
             
@@ -685,6 +671,41 @@ class RadarPredict:
             
         except Exception as e:
             logger.error(f"上傳雷達降雨預報至 Cloudflare R2 失敗: {e}")
+            raise
+
+class TyphoonForecastImage:
+    """
+    將颱風預報圖片 (bytes) 上傳到 Cloudflare R2。
+    """
+    @staticmethod
+    def save_to_r2(image_data: bytes, storage_path: str) -> None:
+        """
+        將圖片二進位資料上傳至 R2。
+
+        參數:
+            image_data (bytes): 圖片的二進位內容。
+            storage_path (str): 在儲存桶內的目標路徑。
+        """
+        try:
+            s3 = get_r2_client()
+            bucket_name = os.getenv('R2_BUCKET_NAME')
+            
+            if not bucket_name:
+                raise ValueError("R2_BUCKET_NAME not configured")
+
+            s3.put_object(
+                Bucket=bucket_name,
+                Key=storage_path,
+                Body=image_data,
+                ContentType='image/png',
+                CacheControl='public, max-age=3600',  # 設定快取 1 小時
+            )
+            
+            size_info = f"({len(image_data):,} bytes)"
+            logger.info(f"已成功上傳颱風預報圖片至 Cloudflare R2: {storage_path} {size_info}")
+            
+        except Exception as e:
+            logger.error(f"上傳颱風預報圖片至 Cloudflare R2 失敗: {e}")
             raise
 
 class UVIndexData(FirestoreModel):
@@ -908,7 +929,7 @@ class AirQualityData(FirestoreModel):
         except Exception as e:
             logger.error(f"批次儲存空氣品質資料時發生錯誤: {e}")
             raise
-    
+        
 class SunriseData(FirestoreModel):
     """日出日落與月出月落資料模型"""
     collection_name = 'sunrise_sunset'
