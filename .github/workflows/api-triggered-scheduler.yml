@@ -75,9 +75,9 @@ jobs:
           if (( hour == 0 && minute >= 5 && minute < 15 )); then
             tasks_to_run+=("update_sunrise_sunset")
           fi
-          
-          # 判斷式 6: 颱風預報，每天兩次 (台灣時間 02:40 和 14:40 觸發)
-          if (( (hour == 2 || hour == 14) && minute >= 40 && minute < 50 )); then
+
+          # 判斷式 6: 颱風預報，每天兩次 (台灣時間 03:05 和 15:05 觸發)
+          if (( (hour == 3 || hour == 15) && minute >= 5 && minute < 15 )); then
             tasks_to_run+=("update_typhoon_forecast")
           fi
 
