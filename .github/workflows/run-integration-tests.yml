@@ -1,0 +1,42 @@
+# .github/workflows/run-integration-tests.yml
+
+name: Run Integration Tests
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+  workflow_dispatch: # 允許手動觸發
+
+jobs:
+  run-tests:
+    name: Run Weather Backend Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python Environment and Cache
+        # action.yml 位於 .github/actions/setup-python-env/
+        uses: ./.github/actions/setup-python-env
+        with:
+          gcp-sa-key: ${{ secrets.GCP_SA_KEY_BASE64 }}
+          cwa-api-key: ${{ secrets.CWA_API_KEY }}
+          ncdr-api-key: ${{ secrets.NCDR_API_KEY }}
+          monev-api-key: ${{ secrets.MONEV_API_KEY }}
+          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          telegram-bot-token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          telegram-chat-id: ${{ secrets.TELEGRAM_CHAT_ID }}
+          r2-bucket-name: ${{ vars.R2_BUCKET_NAME }}
+          r2-endpoint-url: ${{ vars.R2_ENDPOINT_URL }}
+
+      - name: Run ALL Integration Tests
+        # "discover tests" 會自動尋找 "tests" 資料夾下所有 "test_*.py" 的檔案並執行。
+        run: python -m unittest discover tests
