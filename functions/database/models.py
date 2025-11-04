@@ -296,6 +296,7 @@ class ObservationData(FirestoreModel):
 
     @staticmethod
     def batch_save(observations: List[Dict], batch_size: int = 500) -> Dict:
+    
         """
         批次儲存氣象站觀測資料
         
@@ -305,6 +306,9 @@ class ObservationData(FirestoreModel):
         回傳:
             stats: 執行結果統計資訊
         """
+        from google.api_core.exceptions import ResourceExhausted, DeadlineExceeded
+        circuit_open = False
+
         stats = {
             'total_attempts': len(observations),
             'success_count': 0,
@@ -321,6 +325,15 @@ class ObservationData(FirestoreModel):
             collection_ref = db.collection('observations')
 
             for data in observations:
+                if circuit_open:
+                    # 標記失敗
+                    stats['failed_count'] += 1
+                    stats['failed_items'].append({
+                        'stationId': data.get('stationId'),
+                        'stationName': data.get('stationName'),
+                        'error': 'Firestore quota exceeded. Write operation aborted.'
+                    })
+                    continue
                 try:
                     model = ObservationData(
                         station_id=data['stationId'],
@@ -343,6 +356,17 @@ class ObservationData(FirestoreModel):
                         count = 0
                         logger.info(f"已批次處理 {batch_size} 筆觀測資料")
 
+                except (ResourceExhausted, DeadlineExceeded) as e:
+                    circuit_open = True
+                    stats['failed_count'] += 1
+                    stats['failed_items'].append({
+                        'stationId': data.get('stationId'),
+                        'stationName': data.get('stationName'),
+                        'error': f'{type(e).__name__}: {e}'
+                    })
+                    logger.error(f"Firestore quota exceeded, aborting batch_save: {e}")
+                    raise
+
                 except Exception as e:
                     stats['failed_count'] += 1
                     stats['failed_items'].append({
@@ -354,7 +378,7 @@ class ObservationData(FirestoreModel):
                     logger.error(f"處理觀測資料時發生錯誤: {data.get('stationName')}_{data.get('stationId')}, 錯誤: {e}")
                     continue
 
-            if count > 0:
+            if count > 0 and not circuit_open:
                 batch.commit()
                 logger.info(f"已處理剩餘 {count} 筆觀測資料")
 
@@ -430,6 +454,9 @@ class ThreeHourForecast(FirestoreModel):
             forecasts: 預報資料列表
             batch_size: 每批次處理的文件數量 
         """
+        from google.api_core.exceptions import ResourceExhausted, DeadlineExceeded
+        circuit_open = False
+
         stats = {
             'total_attempts': len(forecasts),
             'success_count': 0,
@@ -446,6 +473,14 @@ class ThreeHourForecast(FirestoreModel):
             collection_ref = db.collection('weather_forecasts')
             
             for data in forecasts:
+                if circuit_open:
+                    stats['failed_count'] += 1
+                    stats['failed_items'].append({
+                        'countyName': data.get('countyName'),
+                        'townName': data.get('townName'),
+                        'error': 'Firestore quota exceeded. Write operation aborted.'
+                    })
+                    continue                
                 try:
                     # 用 model 統一欄位邏輯
                     model = ThreeHourForecast(
@@ -469,6 +504,17 @@ class ThreeHourForecast(FirestoreModel):
                         count = 0
                         logger.info(f"已批次處理 {batch_size} 筆三小時預報資料")
 
+                except (ResourceExhausted, DeadlineExceeded) as e:
+                    circuit_open = True
+                    stats['failed_count'] += 1
+                    stats['failed_items'].append({
+                        'countyName': data.get('countyName'),
+                        'townName': data.get('townName'),
+                        'error': f'{type(e).__name__}: {e}'
+                    })
+                    logger.error(f"Firestore quota exceeded, aborting batch_save: {e}")
+                    raise
+
                 except Exception as e:
                     stats['failed_count'] += 1
                     stats['failed_items'].append({
@@ -480,7 +526,7 @@ class ThreeHourForecast(FirestoreModel):
                     continue
             
             # 處理剩餘的資料
-            if count > 0:
+            if count > 0 and not circuit_open:
                 batch.commit()
                 logger.info(f"已處理剩餘 {count} 筆三小時預報資料")
             
@@ -549,6 +595,9 @@ class WeeklyForecast(FirestoreModel):
             forecasts: 預報資料列表
             batch_size: 每批次處理的文件數量 (Firestore 限制為 500)
         """
+        from google.api_core.exceptions import ResourceExhausted, DeadlineExceeded
+        circuit_open = False
+
         stats = {
             'total_attempts': len(forecasts),
             'success_count': 0,
@@ -565,6 +614,14 @@ class WeeklyForecast(FirestoreModel):
             collection_ref = db.collection('weather_forecasts')
 
             for data in forecasts:
+                if circuit_open:
+                    stats['failed_count'] += 1
+                    stats['failed_items'].append({
+                        'countyName': data.get('countyName'),
+                        'townName': data.get('townName'),
+                        'error': 'Firestore quota exceeded. Write operation aborted.'
+                    })
+                    continue
                 try:
                     # 用 model 統一欄位邏輯
                     model = WeeklyForecast(
@@ -588,6 +645,17 @@ class WeeklyForecast(FirestoreModel):
                         count = 0
                         logger.info(f"已批次處理 {batch_size} 筆週預報資料")
 
+                except (ResourceExhausted, DeadlineExceeded) as e:
+                    circuit_open = True
+                    stats['failed_count'] += 1
+                    stats['failed_items'].append({
+                        'countyName': data.get('countyName'),
+                        'townName': data.get('townName'),
+                        'error': f'{type(e).__name__}: {e}'
+                    })
+                    logger.error(f"Firestore quota exceeded, aborting batch_save: {e}")
+                    raise
+
                 except Exception as e:
                     stats['failed_count'] += 1
                     stats['failed_items'].append({
@@ -599,7 +667,7 @@ class WeeklyForecast(FirestoreModel):
                     continue
             
             # 處理剩餘的資料
-            if count > 0:
+            if count > 0 and not circuit_open:
                 batch.commit()
                 logger.info(f"已處理剩餘 {count} 筆週預報資料")
             
@@ -754,6 +822,8 @@ class UVIndexData(FirestoreModel):
         回傳:
             stats: 執行結果統計資訊
         """
+        from google.api_core.exceptions import ResourceExhausted, DeadlineExceeded
+        circuit_open = False
         stats = {
             'total_attempts': len(uv_data),
             'success_count': 0,
@@ -770,6 +840,14 @@ class UVIndexData(FirestoreModel):
             collection_ref = db.collection('uv_index')
             
             for data in uv_data:
+                if circuit_open:
+                    stats['failed_count'] += 1
+                    stats['failed_items'].append({
+                        'stationId': data.get('stationId'),
+                        'stationName': data.get('stationName'),
+                        'error': 'Firestore quota exceeded. Write operation aborted.'
+                    })
+                    continue
 
                 try:
 
@@ -795,6 +873,17 @@ class UVIndexData(FirestoreModel):
                         count = 0
                         logger.info(f"已批次處理 {batch_size} 筆紫外線指數資料")
 
+                except (ResourceExhausted, DeadlineExceeded) as e:
+                    circuit_open = True
+                    stats['failed_count'] += 1
+                    stats['failed_items'].append({
+                        'stationId': data.get('stationId'),
+                        'stationName': data.get('stationName'),
+                        'error': f'{type(e).__name__}: {e}'
+                    })
+                    logger.error(f"Firestore quota exceeded, aborting batch_save: {e}")
+                    raise
+
                 except Exception as e:
 
                     stats['failed_count'] += 1
@@ -807,7 +896,7 @@ class UVIndexData(FirestoreModel):
                     logger.error(f"處理紫外線指數資料時發生錯誤: {data.get('stationName')}_{data.get('stationId')}, 錯誤: {e}")
                     continue
                 
-            if count > 0:
+            if count > 0 and not circuit_open:
                 batch.commit()
                 logger.info(f"已處理剩餘 {count} 筆紫外線指數資料")
 
@@ -868,6 +957,8 @@ class AirQualityData(FirestoreModel):
         回傳:
             stats: 執行結果統計資訊
         """
+        from google.api_core.exceptions import ResourceExhausted, DeadlineExceeded
+        circuit_open = False
         stats = {
             'total_attempts': len(aq_data),
             'success_count': 0,
@@ -884,6 +975,14 @@ class AirQualityData(FirestoreModel):
             collection_ref = db.collection('air_quality')
 
             for data in aq_data:
+                if circuit_open:
+                    stats['failed_count'] += 1
+                    stats['failed_items'].append({
+                        'stationId': data.get('stationId'),
+                        'stationName': data.get('stationName'),
+                        'error': 'Firestore quota exceeded. Write operation aborted.'
+                    })
+                    continue
 
                 try:
                     model = AirQualityData(
@@ -909,6 +1008,17 @@ class AirQualityData(FirestoreModel):
                         count = 0
                         logger.info(f"已批次處理 {batch_size} 筆空氣品質資料")
 
+                except (ResourceExhausted, DeadlineExceeded) as e:
+                    circuit_open = True
+                    stats['failed_count'] += 1
+                    stats['failed_items'].append({
+                        'stationId': data.get('stationId'),
+                        'stationName': data.get('stationName'),
+                        'error': f'{type(e).__name__}: {e}'
+                    })
+                    logger.error(f"Firestore quota exceeded, aborting batch_save: {e}")
+                    raise
+
                 except Exception as e:
 
                     stats['failed_count'] += 1
@@ -921,7 +1031,7 @@ class AirQualityData(FirestoreModel):
                     logger.error(f"處理空氣品質資料時發生錯誤: {data.get('stationName')}_{data.get('stationId')}, 錯誤: {e}")
                     continue
 
-            if count > 0:
+            if count > 0 and not circuit_open:
                 batch.commit()
                 logger.info(f"已處理剩餘 {count} 筆空氣品質資料")
             return stats
@@ -973,6 +1083,8 @@ class SunriseData(FirestoreModel):
         回傳:
             stats: 執行結果統計資訊
         """
+        from google.api_core.exceptions import ResourceExhausted, DeadlineExceeded
+        circuit_open = False
         stats = {
             'total_attempts': len(sunrise_list),
             'success_count': 0,
@@ -989,6 +1101,14 @@ class SunriseData(FirestoreModel):
             collection_ref = db.collection('sunrise_sunset')
             
             for data in sunrise_list:
+                if circuit_open:
+                    stats['failed_count'] += 1
+                    stats['failed_items'].append({
+                        'countyName': data.get('countyName'),
+                        'date': data.get('date'),
+                        'error': 'Firestore quota exceeded. Write operation aborted.'
+                    })
+                    continue
                 try:
                     model = SunriseData(
                         county_name=data['countyName'],
@@ -1012,6 +1132,17 @@ class SunriseData(FirestoreModel):
                         count = 0
                         logger.info(f"已批次處理 {batch_size} 筆天文資料")
 
+                except (ResourceExhausted, DeadlineExceeded) as e:
+                    circuit_open = True
+                    stats['failed_count'] += 1
+                    stats['failed_items'].append({
+                        'countyName': data.get('countyName'),
+                        'date': data.get('date'),
+                        'error': f'{type(e).__name__}: {e}'
+                    })
+                    logger.error(f"Firestore quota exceeded, aborting batch_save: {e}")
+                    raise
+                
                 except Exception as e:
                     item_id = f"{data.get('countyName', 'N/A')}-{data.get('date', 'N/A')}"
                     stats['failed_count'] += 1
@@ -1022,7 +1153,7 @@ class SunriseData(FirestoreModel):
                     logger.error(f"處理日出日落資料時發生錯誤: {item_id}, 錯誤: {e}")
                     continue
 
-            if count > 0:
+            if count > 0 and not circuit_open:
                 batch.commit()
                 logger.info(f"已處理剩餘 {count} 筆日出日落資料")
 

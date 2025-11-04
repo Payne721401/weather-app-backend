@@ -42,7 +42,7 @@ jobs:
             exit 0
           fi
 
-          # --- 處理由 App Script 觸發的智能調度 ---
+          # --- 處理 App Script 的觸發 ---
           echo "🤖 Running in scheduled mode..."
           # 使用 TZ='Asia/Taipei' 來獲取台灣時間 (UTC+8)
           hour=$(TZ='Asia/Taipei' date +%H)
@@ -51,32 +51,36 @@ jobs:
 
           tasks_to_run=()
 
-          # 判斷式 1: 每10分鐘 (因為 App Script 每10分鐘觸發一次，所以這個永遠執行)
+          # 1: Every 10 minutes 
           tasks_to_run+=("update_radar")
 
-          # 判斷式 2: 每小時 (在整點後 5-14 分鐘之間觸發時執行)
+          # 2: Every hour (triggered between 5-14 minutes past the hour)
           if (( minute >= 5 && minute < 15 )); then
             tasks_to_run+=("update_air_quality")
             tasks_to_run+=("update_uv_index")
+          fi
+
+          # 3: Every 2 hours
+          if (( hour % 2 == 0 && minute >= 5 && minute < 15 )); then
             tasks_to_run+=("update_current_weather")
           fi
 
-          # 判斷式 3: 每3小時 (0,3,6...點後的 5-14 分鐘之間觸發)
+          # 4: Every 3 hours
           if (( hour % 3 == 0 && minute >= 5 && minute < 15 )); then
             tasks_to_run+=("update_three_hour_forecast")
           fi
 
-          # 判斷式 4: 每天兩次 (台灣時間 06:05 和 18:05 觸發)
+          # 4: Every 12 hours 
           if (( (hour == 6 || hour == 18) && minute >= 5 && minute < 15 )); then
             tasks_to_run+=("update_weekly_forecast")
           fi
 
-          # 判斷式 5: 每天一次 (台灣時間 00:05 觸發)
+          # 5: Daily at 00:05 (UTC+8)
           if (( hour == 0 && minute >= 5 && minute < 15 )); then
             tasks_to_run+=("update_sunrise_sunset")
           fi
 
-          # 判斷式 6: 颱風預報，每天兩次 (台灣時間 03:05 和 15:05 觸發)
+          # 6: Typhoon forecast, triggered twice daily (UTC+8 at 03:05 and 15:05)
           if (( (hour == 3 || hour == 15) && minute >= 5 && minute < 15 )); then
             tasks_to_run+=("update_typhoon_forecast")
           fi
