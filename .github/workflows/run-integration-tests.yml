@@ -1,29 +1,57 @@
-# .github/workflows/run-integration-tests.yml
-
-name: Run Integration Tests
+name: CI
 
 on:
-  push:
-    branches:
-      - main
-      - dev
   pull_request:
-    branches:
-      - main
-      - dev
-  workflow_dispatch: # 允許手動觸發
+    branches: [main, dev]
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+    inputs:
+      run_integration:
+        description: 'Also run integration tests (hits real CWA/NCDR/MONEV APIs)'
+        type: boolean
+        default: false
 
 jobs:
-  run-tests:
-    name: Run Weather Backend Tests
+  unit:
+    name: Unit tests + lint
     runs-on: ubuntu-latest
-    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-      - name: Setup Python Environment and Cache
-        # action.yml 位於 .github/actions/setup-python-env/
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: requirements_dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements_dev.txt
+
+      # functions/ 目前有大量既有 lint 違規，列為 P1 後續清理；本次 CI 只 lint tests/
+      - name: Lint with ruff
+        run: ruff check tests
+
+      - name: Run unit tests
+        run: pytest -m unit
+
+  integration:
+    name: Integration tests
+    if: github.event_name == 'workflow_dispatch' && inputs.run_integration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Python Environment
         uses: ./.github/actions/setup-python-env
         with:
           gcp-sa-key: ${{ secrets.GCP_SA_KEY_BASE64 }}
@@ -37,6 +65,12 @@ jobs:
           r2-bucket-name: ${{ vars.R2_BUCKET_NAME }}
           r2-endpoint-url: ${{ vars.R2_ENDPOINT_URL }}
 
-      - name: Run ALL Integration Tests
-        # "discover tests" 會自動尋找 "tests" 資料夾下所有 "test_*.py" 的檔案並執行。
-        run: python -m unittest discover tests
+      - name: Install dev dependencies into venv
+        run: |
+          source .venv/bin/activate
+          pip install -r requirements_dev.txt
+
+      - name: Run integration tests
+        run: |
+          source .venv/bin/activate
+          pytest -m integration
