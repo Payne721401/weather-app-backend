@@ -83,11 +83,18 @@ pip-delete-this-directory.txt
 
 # Ignored directories as requested
 keys/
-tests/
 functions/ai_advice/
 
+# Test caches (tests/ itself is tracked)
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Archived legacy tests (kept on disk for reference but not tracked)
+tests/_archive/
+
 # Ignored data files as requested
-requirements_dev.txt
 *.csv
 radar_forecast.json
 radar_forecast (1).json
