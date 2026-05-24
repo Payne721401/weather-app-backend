@@ -3,12 +3,16 @@ name: Unified Smart Scheduler
 on:
   repository_dispatch:
     types: [run-weather-tasks]
-  
+
   workflow_dispatch:
     inputs:
       task:
         description: 'Manually run a single task (e.g., update_radar)'
         required: false
+
+concurrency:
+  group: weather-tasks
+  cancel-in-progress: false
 
 jobs:
   run-tasks:
@@ -16,6 +20,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Setup Python Environment
         uses: ./.github/actions/setup-python-env
