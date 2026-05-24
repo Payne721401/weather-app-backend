@@ -1,0 +1,33 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+norecursedirs = ["_archive", ".*", "venv", "__pycache__"]
+addopts = "-v --strict-markers"
+markers = [
+    "unit: no external dependencies, safe to run in CI without secrets",
+    "integration: hits real CWA / NCDR / MONEV / Firestore / R2, requires env vars",
+    "slow: takes longer than ~5 seconds",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+exclude = [
+    ".venv",
+    "venv",
+    "tests/_archive",
+    "functions/ai_advice",
+    "tools",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "W"]
+ignore = [
+    "E501",  # line too long, handled by formatter
+    "E402",  # module level import not at top (some files do sys.path hacking)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["B011"]  # asserts in tests are fine
