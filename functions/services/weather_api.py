@@ -325,6 +325,9 @@ class WeatherAPIService:
             }
             
             result = self._make_request("", params, api_type='monev')
+            # MOENV v2 endpoint 直接回傳 list，包成 {records: [...]} 與其他 API 形狀一致
+            if isinstance(result, list):
+                result = {'records': result}
             # 只在非 CI 環境顯示成功日誌
             if not self.is_ci_environment:
                 self.logger.info("成功獲取空氣品質資料")
