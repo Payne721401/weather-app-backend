@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from dotenv import load_dotenv
@@ -26,6 +27,21 @@ for path in (PROJECT_ROOT, FUNCTIONS_DIR):
         sys.path.insert(0, str(path))
 
 load_dotenv(PROJECT_ROOT / ".env")
+
+
+# P1 workaround: functions/database/models.py initializes Firebase Admin and
+# creates a Firestore client at module import time. In environments without
+# GCP credentials (CI unit jobs, fresh clones without .env) that crashes
+# with DefaultCredentialsError, making the module un-importable. We inject
+# MagicMock into sys.modules BEFORE any test imports the module so the
+# import succeeds and individual tests can still patch
+# functions.database.models.get_firestore_client for controlled behavior.
+# Remove this once models.py switches to lazy initialization.
+_gcp_credentials = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+if not _gcp_credentials or not os.path.exists(_gcp_credentials):
+    sys.modules.setdefault("firebase_admin", MagicMock())
+    sys.modules.setdefault("firebase_admin.firestore", MagicMock())
+    sys.modules.setdefault("firebase_admin.credentials", MagicMock())
 
 
 INTEGRATION_REQUIRED_ENV = (
